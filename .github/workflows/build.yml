@@ -1,0 +1,276 @@
+name: Build & Release Tauri (Desktop + iOS + Android)
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ "v*" ]     # create a Release when you push a tag like v1.2.3
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+# Cancel redundant runs on the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Minimum required perms (bump contents to write for releases)
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  NODE_VERSION: "20"
+  RUST_TOOLCHAIN: "stable"
+  TAURI_SKIP_MAXIMIZE: "true"  # example env; remove if not needed
+  # If you use pnpm, enable corepack and swap npm commands accordingly.
+
+jobs:
+  # --------------------------
+  # Desktop (macOS/Windows/Linux)
+  # --------------------------
+  desktop:
+    name: Desktop (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macOS
+            runner: macos-14
+          - platform: Windows
+            runner: windows-latest
+          - platform: Linux
+            runner: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ${{ runner.os }}-desktop
+          workspaces: |
+            src-tauri -> target
+
+      - name: Install app deps
+        run: npm ci
+
+      - name: Install NSIS (Windows only)
+        if: matrix.platform == 'Windows'
+        run: choco install nsis -y
+
+      - name: Build (Tauri desktop)
+        uses: tauri-apps/tauri-action@v0
+        with:
+          includeDebug: false
+          # Set these to publish directly via this action if you prefer:
+          # tagName: ${{ github.ref_name }}
+          # releaseName: Release ${{ github.ref_name }}
+        env:
+          # macOS signing/notarization (optional)
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Windows Code Sign (optional)
+          # CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          # CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+
+      - name: Upload desktop artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-desktop-${{ matrix.platform }}-${{ github.run_number }}
+          path: |
+            src-tauri/target/**/bundle/**
+            **/*.dmg
+            **/*.msi
+            **/*.exe
+            **/*.AppImage
+            **/*.deb
+            **/*.rpm
+          if-no-files-found: warn
+          retention-days: 14
+
+  # --------------------------
+  # Android
+  # --------------------------
+  android:
+    name: Android (APK/AAB)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: linux-android
+          workspaces: |
+            src-tauri -> target
+
+      - name: Install app deps
+        run: npm ci
+
+      - name: Setup Java (JDK 17)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Install Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept licenses & install components
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager "platform-tools" \
+                     "build-tools;35.0.0" \
+                     "platforms;android-35" \
+                     "ndk;26.3.11579264" \
+                     "cmake;3.22.1"
+
+      - name: Gradle cache (wrapper + caches)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+
+      - name: Build (Tauri Android)
+        run: npx tauri android build
+        env:
+          # Optional signing (use a secure path for keystore if needed)
+          # TAURI_ANDROID_KEYSTORE_PATH: ${{ secrets.TAURI_ANDROID_KEYSTORE_PATH }}
+          # TAURI_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.TAURI_ANDROID_KEYSTORE_PASSWORD }}
+          # TAURI_ANDROID_KEY_ALIAS: ${{ secrets.TAURI_ANDROID_KEY_ALIAS }}
+          # TAURI_ANDROID_KEY_ALIAS_PASSWORD: ${{ secrets.TAURI_ANDROID_KEY_ALIAS_PASSWORD }}
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-android-${{ github.run_number }}
+          path: |
+            src-tauri/gen/android/app/build/outputs/**/*.apk
+            src-tauri/gen/android/app/build/outputs/**/*.aab
+          if-no-files-found: warn
+          retention-days: 14
+
+  # --------------------------
+  # iOS
+  # --------------------------
+  ios:
+    name: iOS (xcarchive / ipa)
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Setup Rust + iOS targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: aarch64-apple-ios, x86_64-apple-ios, aarch64-apple-ios-sim
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: macos-ios
+          workspaces: |
+            src-tauri -> target
+
+      - name: Install app deps
+        run: npm ci
+
+      - name: Install CocoaPods
+        run: sudo gem install cocoapods
+
+      - name: CocoaPods cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cocoapods
+            Pods
+            src-tauri/gen/ios/**/Pods
+          key: ${{ runner.os }}-pods-${{ hashFiles('**/Podfile.lock') }}
+          restore-keys: ${{ runner.os }}-pods-
+
+      - name: Build (Tauri iOS)
+        run: npx tauri ios build
+        env:
+          # Optional signing / export with Xcode:
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # IOS_CODE_SIGN_IDENTITY: ${{ secrets.IOS_CODE_SIGN_IDENTITY }}
+          # PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+
+      - name: Upload iOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-ios-${{ github.run_number }}
+          path: |
+            src-tauri/gen/ios/**/*.xcarchive
+            src-tauri/gen/ios/**/Build/**/*.ipa
+            src-tauri/gen/ios/**/Build/**/*.app
+          if-no-files-found: warn
+          retention-days: 14
+
+  # --------------------------
+  # Release (only on tags)
+  # --------------------------
+  release:
+    name: Create GitHub Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [desktop, android, ios]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/**/*
+          fail_on_unmatched_files: false
+          generate_release_notes: true

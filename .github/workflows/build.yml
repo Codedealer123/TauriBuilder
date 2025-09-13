@@ -71,15 +71,9 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         with:
           includeDebug: false
-        env:
-          # macOS / Windows signing can be added via secrets (optional)
-          # APPLE_ID: ${{ secrets.APPLE_ID }}
-          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          # CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          # If you want the action to publish directly, also set:
+          # tagName: ${{ github.ref_name }}
+          # releaseName: Release ${{ github.ref_name }}
 
       - name: Upload desktop artifacts
         uses: actions/upload-artifact@v4
@@ -150,12 +144,6 @@ jobs:
 
       - name: Build (Tauri Android)
         run: npx tauri android build
-        env:
-          # Optional signing secrets
-          # TAURI_ANDROID_KEYSTORE_PATH: ${{ secrets.TAURI_ANDROID_KEYSTORE_PATH }}
-          # TAURI_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.TAURI_ANDROID_KEYSTORE_PASSWORD }}
-          # TAURI_ANDROID_KEY_ALIAS: ${{ secrets.TAURI_ANDROID_KEY_ALIAS }}
-          # TAURI_ANDROID_KEY_ALIAS_PASSWORD: ${{ secrets.TAURI_ANDROID_KEY_ALIAS_PASSWORD }}
 
       - name: Upload Android artifacts
         uses: actions/upload-artifact@v4
@@ -212,13 +200,6 @@ jobs:
 
       - name: Build (Tauri iOS)
         run: npx tauri ios build
-        env:
-          # Optional Apple signing/export secrets
-          # APPLE_ID: ${{ secrets.APPLE_ID }}
-          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # IOS_CODE_SIGN_IDENTITY: ${{ secrets.IOS_CODE_SIGN_IDENTITY }}
-          # PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
 
       - name: Upload iOS artifacts
         uses: actions/upload-artifact@v4
